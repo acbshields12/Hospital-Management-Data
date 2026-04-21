@@ -15,7 +15,7 @@
 
 ---
 
-## 📸 Dashboard Preview
+## Dashboard Preview
 
 ![](assets/dash.jpg)
 
@@ -677,7 +677,7 @@ clinic-operations-analytics/
 
 ---
 
-## 👤 Author
+## Author
 
 Adriane Clark Ballesteros  
 Healthcare Data Analyst Trainee
