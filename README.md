@@ -15,6 +15,12 @@
 
 ---
 
+## 📸 Dashboard Preview
+
+![](assets/dash.jpg)
+
+---
+
 ## Table of Contents
 
 1. [Project background](#1-project-background)
