@@ -677,5 +677,12 @@ clinic-operations-analytics/
 
 ---
 
-*Clark · Data Analyst Portfolio · 2024*  
-*Stack: Excel · MySQL 8.0 · Power BI Desktop*
+## 👤 Author
+
+Adriane Clark Ballesteros  
+Healthcare Data Analyst Trainee
+
+* 🔗 GitHub: https://github.com/acbshields12
+
+---
+
