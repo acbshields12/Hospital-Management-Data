@@ -1,5 +1,11 @@
 # Hospital Management Data  
+---
 
+## Dashboard Preview
+
+![](insights/dash.jpg)
+
+---
 ### A Data Analyst Portfolio Project
 
 **Tools used:** Excel · MySQL 8.0 · Power BI Desktop  
@@ -13,13 +19,7 @@
 > analyzed using SQL, and visualized in a single-page Power BI dashboard.
 > Every number in this report comes directly from the dataset.
 
----
 
-## Dashboard Preview
-
-![](assets/dash.jpg)
-
----
 
 ## Table of Contents
 
@@ -664,14 +664,16 @@ clinic-operations-analytics/
 │   ├── treatments.csv
 │   └── billing.csv
 │
+├── insights/
+│   └── dash.jpg                    ← screenshot of the dashboard
+│
+├── powerbi/
+│   └── dash.pbix                    ← export your Power BI dashboard here
+│
 ├── sql/
 │   └── clinic_analytics.sql       ← full script: schema, import notes,
 │                                     EDA, analytics, window functions, view
 │
-├── assets/
-│   └── dashboard_preview.png      ← export your Power BI dashboard here
-│
-├── clinic_analytics.pbix          ← your Power BI file (add after building)
 └── README.md
 ```
 
