@@ -6,677 +6,133 @@
 ![](insights/dash.jpg)
 
 ---
-### A Data Analyst Portfolio Project
+# 🏥 Hospital Management Data Analysis
 
-**Tools used:** Excel · MySQL 8.0 · Power BI Desktop  
-**Dataset:** 5 tables · 50 patients · 10 doctors · 200 appointments · Jan–Dec 2023  
-**Skills demonstrated:** Data cleaning · Relational database design · SQL analytics · DAX · Dashboard design
+An end-to-end analysis of a five-table hospital database (patients, doctors, appointments, treatments and billing) to understand appointment outcomes, billing and payment performance, and where revenue is being lost.
 
 ---
 
-> This project simulates a real-world analytics workflow for a multi-branch clinic.
-> Raw CSV files were cleaned in Excel, loaded into a relational MySQL database,
-> analyzed using SQL, and visualized in a single-page Power BI dashboard.
-> Every number in this report comes directly from the dataset.
+## 🎯 Project Overview
 
+Hospitals depend on completed appointments and collected payments. This project links appointment, treatment and billing records to answer four questions:
 
-
-## Table of Contents
-
-1. [Project background](#1-project-background)
-2. [Dataset overview](#2-dataset-overview)
-3. [Part 1 — Excel data cleaning](#3-part-1--excel-data-cleaning)
-4. [Part 2 — MySQL database & queries](#4-part-2--mysql-database--queries)
-5. [Part 3 — Power BI dashboard](#5-part-3--power-bi-dashboard)
-6. [Key findings](#6-key-findings)
-7. [Recommendations](#7-recommendations)
-8. [How to reproduce this project](#8-how-to-reproduce-this-project)
-9. [Repository structure](#9-repository-structure)
+1. How many scheduled appointments are actually completed?
+2. How much of the billed amount is collected, and how much is lost or outstanding?
+3. Do doctors, branches, treatments or patient groups differ in outcomes?
+4. What should the hospital change first to reduce leakage?
 
 ---
 
-## 1. Project background
+## 🗂️ Dataset
 
-A multi-branch healthcare clinic wanted to understand three things:
-
-- **Revenue health** — how much money is being billed, collected, and lost
-- **Operational efficiency** — are patients showing up, and which doctors struggle most with no-shows
-- **Treatment & patient mix** — which treatments generate the most revenue and what does the patient base look like
-
-The dataset covers a full calendar year (January–December 2023) across three branches: Central Hospital, Eastside Clinic, and Westside Clinic. The analysis was performed entirely from scratch — raw CSV exports, no pre-cleaned data.
-
----
-
-## 2. Dataset overview
-
-Five CSV files were provided. Below is a summary of each table and the data quality issues found.
-
-| Table | Rows | Key columns | Issues found |
-|---|---|---|---|
-| `patients_clean.csv` | 50 | patient_id, gender, date_of_birth, insurance_provider, age_group | Dates stored as text in some rows |
-| `doctors.csv` | 10 | doctor_id, specialization, hospital_branch, years_experience | Clean — no issues |
-| `appointments.csv` | 200 | appointment_id, patient_id, doctor_id, appointment_date, status | Date column needed explicit type cast |
-| `treatments.csv` | 200 | treatment_id, treatment_type, cost | `cost` column: values quoted with commas e.g. `" 3,941.97 "` |
-| `billing.csv` | 200 | bill_id, amount, payment_method, payment_status | `amount` column: same quoted comma issue + header had a leading space |
-
-**Data model relationships:**
-
-```
-patients (1) ──► (many) appointments (many) ◄── (1) doctors
-                        │
-                       (1)
-                        │
-                  treatments (1)
-                        │
-                       (1)
-                        │
-                   billing (1)
-```
-
----
-
-## 3. Part 1 — Excel data cleaning
-
-Before importing into MySQL, the following issues were resolved in Excel.
-
-### Issue 1 — Quoted comma values in `billing.csv` and `treatments.csv`
-
-The `amount` and `cost` columns contained values formatted as text with thousands separators inside quotes, for example `" 3,941.97 "`. MySQL cannot import these as numeric values without cleaning.
-
-**Fix applied in Excel (new helper column, then paste-as-values to replace original):**
-
-```excel
-=VALUE(TRIM(SUBSTITUTE(E2,",","")))
-```
-
-- `SUBSTITUTE(E2,",","")` removes the comma separator
-- `TRIM()` removes the leading and trailing spaces
-- `VALUE()` converts the resulting text string to a number
-
-The cleaned column was renamed `amount` (removing the space from the original header ` amount `).
-
-### Issue 2 — Date columns stored as text
-
-`appointment_date`, `date_of_birth`, and `registration_date` were verified in Excel using Format Cells. Columns showing left-aligned values were text. Fixed by:
-
-```excel
-=DATEVALUE(TEXT(A2,"YYYY-MM-DD"))
-```
-
-### Issue 3 — Helper columns added before MySQL import
-
-Three helper columns were added to improve reporting flexibility in Power BI:
-
-**appointments.csv — month label column:**
-```excel
-=TEXT(D2,"MMM-YYYY")
-```
-
-**patients_clean.csv — age group verification:**
-```excel
-=IF(L2<18,"Minor",IF(L2<60,"Adult","Senior"))
-```
-
-**billing.csv — payment flag column:**
-```excel
-=IF(G2="Paid","Collected",IF(G2="Pending","Outstanding","Failed"))
-```
-
----
-
-## 4. Part 2 — MySQL database & queries
-
-### Database setup
-
-A dedicated database was created to keep all clinic data isolated:
-
-```sql
-CREATE DATABASE IF NOT EXISTS clinic_analytics;
-USE clinic_analytics;
-```
-
-All five tables were created with explicit data types and foreign key constraints to enforce referential integrity. Import order was followed strictly to avoid FK violations: `patients` → `doctors` → `appointments` → `treatments` → `billing`.
-
-See [`sql/clinic_analytics.sql`](sql/clinic_analytics.sql) for the complete script including all CREATE TABLE statements, analytical queries, window functions, and the master view.
-
----
-
-### SQL queries and results
-
-#### Revenue summary
-
-```sql
-SELECT
-    ROUND(SUM(amount), 2)                                                      AS total_revenue,
-    ROUND(SUM(CASE WHEN payment_status = 'Paid'    THEN amount ELSE 0 END), 2) AS collected,
-    ROUND(SUM(CASE WHEN payment_status = 'Pending' THEN amount ELSE 0 END), 2) AS outstanding,
-    ROUND(SUM(CASE WHEN payment_status = 'Failed'  THEN amount ELSE 0 END), 2) AS failed,
-    ROUND(SUM(CASE WHEN payment_status = 'Paid'    THEN amount ELSE 0 END)
-          * 100.0 / SUM(amount), 1)                                            AS collection_rate_pct
-FROM billing;
-```
-
-**Result:**
-
-| total_revenue | collected | outstanding | failed | collection_rate_pct |
-|---|---|---|---|---|
-| $551,249.85 | $173,424.90 | $184,612.01 | $193,212.94 | 31.5% |
-
-> The most striking finding: **$193,212.94 in failed payments** — 35% of all billed revenue — is a significant risk signal that would normally trigger a review of payment processing workflows.
-
----
-
-#### Revenue by specialization
-
-```sql
-SELECT
-    d.specialization,
-    COUNT(DISTINCT a.appointment_id)  AS total_appointments,
-    ROUND(SUM(b.amount), 2)           AS total_revenue,
-    ROUND(AVG(b.amount), 2)           AS avg_bill
-FROM doctors d
-JOIN appointments a ON d.doctor_id  = a.doctor_id
-JOIN billing b      ON a.patient_id = b.patient_id
-GROUP BY d.specialization
-ORDER BY total_revenue DESC;
-```
-
-**Result:**
-
-| specialization | total_appointments | total_revenue | avg_bill |
-|---|---|---|---|
-| Pediatrics | 98 | $258,937.83 | $2,642.22 |
-| Dermatology | 70 | $202,709.29 | $2,895.85 |
-| Oncology | 32 | $89,602.73 | $2,800.08 |
-
----
-
-#### Doctor no-show rate with RANK() window function
-
-```sql
-SELECT
-    CONCAT(d.first_name, ' ', d.last_name)                      AS doctor_name,
-    d.specialization,
-    d.hospital_branch,
-    COUNT(*)                                                     AS total_appointments,
-    SUM(CASE WHEN a.status = 'No-show' THEN 1 ELSE 0 END)       AS no_shows,
-    ROUND(
-        SUM(CASE WHEN a.status = 'No-show' THEN 1 ELSE 0 END)
-        * 100.0 / COUNT(*), 1
-    )                                                            AS no_show_rate_pct,
-    RANK() OVER (ORDER BY
-        SUM(CASE WHEN a.status = 'No-show' THEN 1 ELSE 0 END)
-        * 100.0 / COUNT(*) DESC
-    )                                                            AS rank_by_noshows
-FROM appointments a
-JOIN doctors d ON a.doctor_id = d.doctor_id
-GROUP BY d.doctor_id, doctor_name, d.specialization, d.hospital_branch
-ORDER BY no_show_rate_pct DESC;
-```
-
-**Result:**
-
-| doctor_name | specialization | branch | appts | no_shows | rate | rank |
-|---|---|---|---|---|---|---|
-| David Jones | Pediatrics | Central Hospital | 14 | 5 | 35.7% | 1 |
-| Sarah Smith | Pediatrics | Central Hospital | 17 | 6 | 35.3% | 2 |
-| Jane Smith | Pediatrics | Eastside Clinic | 22 | 7 | 31.8% | 3 |
-| Sarah Taylor | Dermatology | Central Hospital | 29 | 9 | 31.0% | 4 |
-| David Taylor | Dermatology | Westside Clinic | 25 | 7 | 28.0% | 5 |
-| Linda Wilson | Oncology | Eastside Clinic | 19 | 5 | 26.3% | 6 |
-| Alex Davis | Pediatrics | Central Hospital | 24 | 6 | 25.0% | 7 |
-| Linda Brown | Dermatology | Westside Clinic | 16 | 4 | 25.0% | 8 |
-| Robert Davis | Oncology | Westside Clinic | 13 | 2 | 15.4% | 9 |
-| Jane Davis | Pediatrics | Eastside Clinic | 21 | 1 | 4.8% | 10 |
-
----
-
-#### Monthly revenue with LAG() for month-over-month change
-
-```sql
-SELECT
-    month_year,
-    monthly_revenue,
-    LAG(monthly_revenue) OVER (ORDER BY month_year)             AS prev_month,
-    ROUND(
-        (monthly_revenue - LAG(monthly_revenue) OVER (ORDER BY month_year))
-        * 100.0 / NULLIF(LAG(monthly_revenue) OVER (ORDER BY month_year), 0), 1
-    )                                                           AS mom_change_pct
-FROM (
-    SELECT
-        DATE_FORMAT(bill_date, '%Y-%m') AS month_year,
-        ROUND(SUM(amount), 2)           AS monthly_revenue
-    FROM billing
-    GROUP BY DATE_FORMAT(bill_date, '%Y-%m')
-) AS monthly
-ORDER BY month_year;
-```
-
-**Result:**
-
-| month | revenue | mom_change |
+| Table | Rows | Description |
 |---|---|---|
-| 2023-01 | $58,701.23 | — |
-| 2023-02 | $36,669.69 | -37.5% |
-| 2023-03 | $47,304.29 | +29.0% |
-| 2023-04 | $64,271.54 | +35.9% |
-| 2023-05 | $48,791.05 | -24.1% |
-| 2023-06 | $56,887.82 | +16.6% |
-| 2023-07 | $39,880.19 | -29.9% |
-| 2023-08 | $41,958.67 | +5.2% |
-| 2023-09 | $33,426.53 | -20.3% |
-| 2023-10 | $43,314.15 | +29.6% |
-| 2023-11 | $52,474.98 | +21.1% |
-| 2023-12 | $27,569.71 | -47.4% |
+| `patients` | 50 | Demographics, age group, insurance provider, registration date |
+| `doctors` | 10 | Specialization (Pediatrics, Dermatology, Oncology), branch, years of experience |
+| `appointments` | 200 | Date, time, reason for visit, status (Completed / No-show / Cancelled / Scheduled) |
+| `treatments` | 200 | Treatment type, description, cost, date |
+| `billing` | 200 | Bill amount, payment method, payment status (Paid / Pending / Failed) |
 
-> April 2023 was the peak month at $64,271. December dropped to $27,569 — the lowest of the year, a 57% drop from peak.
+**Period covered:** January – December 2023 · **Branches:** Central Hospital, Eastside Clinic, Westside Clinic
+
+### Table relationships
+
+```mermaid
+erDiagram
+    PATIENTS ||--o{ APPOINTMENTS : books
+    DOCTORS ||--o{ APPOINTMENTS : attends
+    APPOINTMENTS ||--|| TREATMENTS : has
+    TREATMENTS ||--|| BILLING : generates
+    PATIENTS ||--o{ BILLING : pays
+```
+
+All patient, doctor, treatment and bill IDs match across tables. There are no missing values or duplicate records.
 
 ---
 
-#### Treatment type cost analysis
+## 🔧 Approach
 
-```sql
-SELECT
-    treatment_type,
-    COUNT(*)                    AS treatment_count,
-    ROUND(AVG(cost), 2)         AS avg_cost,
-    ROUND(SUM(cost), 2)         AS total_cost
-FROM treatments
-GROUP BY treatment_type
-ORDER BY total_cost DESC;
-```
+1. **Cleaning:** removed stray spaces from column names (`amount`, `cost`) and converted amounts stored as text with thousands separators into numbers.
+2. **Joining:** linked appointments → treatments → billing → patients and doctors. All 200 records joined cleanly, and the treatment cost equalled the billed amount in every case.
+3. **Exploration:** calculated status, payment and revenue metrics overall and by doctor, branch, specialization, treatment type, reason for visit, patient age group, gender, insurance provider and month.
+4. **Statistical testing:** chi-square tests for categorical comparisons and Kruskal–Wallis tests for cost comparisons, using a 5% significance level.
+5. **Data-quality checks:** compared statuses, dates, specializations and registration dates across tables to find inconsistencies.
 
-**Result:**
+**Tools:** Python (pandas, SciPy).
 
-| treatment_type | count | avg_cost | total_cost |
+---
+
+## 📊 Key Findings
+
+### Headline numbers
+
+| Metric | Value |
+|---|---|
+| Appointments | 200 (48 of 50 patients have visits, about 4.2 each) |
+| Completed | 46 (23.0%) |
+| No-Show | 52 (26.0%) |
+| Cancelled | 51 (25.5%) |
+| Still marked "Scheduled" | 51 (25.5%) |
+| Total billed | 551,250 (average bill 2,756) |
+| Bills paid | 64 (32.0%), worth 173,425 (31.5%) |
+| Bills pending | 69 (34.5%), worth 184,612 (33.5%) |
+| Bills failed | 67 (33.5%), worth 193,213 (35.0%) |
+
+### Where the billed value sits
+
+| Appointment status | Bills | Billed amount | Share of total |
 |---|---|---|---|
-| Chemotherapy | 49 | $2,629.71 | $128,855.68 |
-| MRI | 36 | $3,224.95 | $116,098.16 |
-| X-Ray | 41 | $2,698.87 | $110,653.67 |
-| Physiotherapy | 36 | $2,761.61 | $99,418.10 |
-| ECG | 38 | $2,532.22 | $96,224.24 |
+| Completed | 46 | 124,100 | 22.5% |
+| No-Show | 52 | 142,678 | 25.9% |
+| Cancelled | 51 | 152,045 | 27.6% |
+| Scheduled | 51 | 132,427 | 24.0% |
 
-> MRI has the highest average cost per procedure at $3,224.95 despite not being the most frequent treatment.
+### Insights
 
----
-
-#### Master reporting view
-
-```sql
-CREATE OR REPLACE VIEW vw_clinic_master AS
-SELECT
-    a.appointment_id,
-    a.appointment_date,
-    DATE_FORMAT(a.appointment_date, '%Y-%m')  AS month_year,
-    MONTHNAME(a.appointment_date)             AS month_name,
-    a.reason_for_visit,
-    a.status                                  AS appointment_status,
-    p.patient_id,
-    CONCAT(p.first_name, ' ', p.last_name)    AS patient_name,
-    p.gender,
-    p.age,
-    p.age_group,
-    p.insurance_provider,
-    d.doctor_id,
-    CONCAT(d.first_name, ' ', d.last_name)    AS doctor_name,
-    d.specialization,
-    d.hospital_branch,
-    d.years_experience,
-    t.treatment_type,
-    t.cost                                    AS treatment_cost,
-    b.amount                                  AS bill_amount,
-    b.payment_method,
-    b.payment_status
-FROM appointments a
-JOIN patients   p ON a.patient_id     = p.patient_id
-JOIN doctors    d ON a.doctor_id      = d.doctor_id
-JOIN treatments t ON a.appointment_id = t.appointment_id
-JOIN billing    b ON b.treatment_id   = t.treatment_id;
-```
-
-This view joins all 5 tables into a single flat table, which is what Power BI connects to as the reporting layer.
+- **Only about 1 in 4 appointments was completed.** A quarter were no-shows, a quarter were cancelled, and a quarter are still marked "Scheduled" even though every one of them is dated in 2023, so those statuses look out of date.
+- **Every appointment has a treatment and a bill, whatever its status.** 77.5% of the billed value is attached to cancelled, missed or never-updated appointments.
+- **Collection is weak.** Only about one third of billed value has been paid. Even for completed visits, just 14 of 46 bills (31,063 out of 124,100) are paid, leaving 93,037 outstanding.
+- **Payment does not depend on the visit.** 35 bills worth 90,198 are marked as paid for cancelled or no-show appointments, and payment status is unrelated to appointment status (p = 0.998) or to payment method (p = 0.88).
+- **Treatment costs are similar across types.** MRI has the highest average cost (3,225) and ECG the lowest (2,532), but the differences are not significant (p = 0.17). Chemotherapy is the most common treatment (49 cases, 128,856 in total).
+- **A pricing anomaly:** "Basic screening" (average 3,149) costs more than "Advanced protocol" (2,522), p = 0.02.
+- **Emergency visits have the highest average bill (3,186)** and follow-ups the lowest (2,427).
+- **No doctor, branch or specialization differs significantly** in completion, no-show or payment rates (all p > 0.3). Dr. D005 has the busiest schedule (29 appointments) and the lowest completion rate (13.8%), while D007 has the highest (38.5%) but only 7.7% of bills paid. Central Hospital has the highest no-show rate (31.0%).
+- **Seniors and women are worth watching.** Seniors have a 40.6% no-show rate vs 23.2% for adults, and women cancel more often than men (35.7% vs 20.0%), but group sizes are small and the differences are not statistically significant.
+- **Revenue is not concentrated.** The top five patients account for 21.3% of billed value.
 
 ---
 
-## 5. Part 3 — Power BI dashboard
+## ✅ Recommendations
 
-### Design principles
-
-The dashboard was built as a single page to force prioritization — only the most important metrics are shown. Three design rules were followed throughout:
-
-- One accent color (blue `#378ADD`) for all neutral/comparative charts
-- Semantic colors only for status values: green = positive, red = negative, amber = caution
-- No decorative elements — every pixel either shows data or creates space
-
-**Page settings:** Background `#F5F4F0` · Font: Segoe UI · No page border or watermark shapes
-
----
-
-### Step-by-step build instructions
-
-#### Step 1 — Connect to MySQL and clean in Power Query
-
-1. Get Data → MySQL Database → Server: `localhost` · Database: `clinic_analytics`
-2. Select all 5 tables + `vw_clinic_master` → click **Transform Data**
-3. In Power Query Editor:
-   - `billing[amount]` → Data Type → Decimal Number
-   - `treatments[cost]` → Data Type → Decimal Number
-   - `appointments[appointment_date]` → Data Type → Date
-4. Click **Close & Apply**
-
-#### Step 2 — Build the data model
-
-Go to Model view. Create these relationships by dragging field to field:
-
-```
-patients[patient_id]          → appointments[patient_id]      (1 to many)
-doctors[doctor_id]            → appointments[doctor_id]       (1 to many)
-appointments[appointment_id]  → treatments[appointment_id]    (1 to 1)
-treatments[treatment_id]      → billing[treatment_id]         (1 to 1)
-```
-
-Create the Date table (Modeling → New Table):
-
-```dax
-Date = CALENDAR(MIN(appointments[appointment_date]), MAX(appointments[appointment_date]))
-```
-
-Add two columns to the Date table (Modeling → New Column):
-
-```dax
-MonthYear = FORMAT('Date'[Date], "MMM YYYY")
-MonthSort = YEAR('Date'[Date]) * 100 + MONTH('Date'[Date])
-```
-
-Mark as Date Table: Table Tools → Mark as date table → select `Date`. Then connect `Date[Date]` to `appointments[appointment_date]`.
-
-#### Step 3 — Create all DAX measures
-
-Click the `billing` table → Modeling → New Measure. Create all 10 measures listed in the DAX section below. After creating each, set its format in Measure Tools → Format.
-
-#### Step 4 — Set up the page
-
-Right-click the page tab → Rename → type **Clinic Operations Analytics**. Then: View → Page background → Color `#F5F4F0` · Transparency 0%.
-
-#### Step 5 — Build the KPI row (top)
-
-Insert 5 Card visuals across the top. For each:
-- Drop the measure into Fields
-- Format → Callout value: font size 26, bold
-- Format → Category label: font size 10, color `#888888`, rename as shown below
-- Format → Card: border off, background off, shadow off
-
-| Position | Label text | Measure | Value color |
-|---|---|---|---|
-| 1 | Total revenue | `[Total Revenue]` | `#185FA5` |
-| 2 | Collected (paid) | `[Revenue Collected]` | `#0F6E56` |
-| 3 | Outstanding | `[Revenue Outstanding]` | `#854F0B` |
-| 4 | Failed payments | `[Revenue Failed]` | `#A32D2D` |
-| 5 | No-show rate | `[No-Show Rate %]` | `#A32D2D` |
-
-Select all 5 cards → Format → Align top edges → Distribute horizontally.
-
-#### Step 6 — Build the middle row (3 panels)
-
-**Panel 1 — Revenue by payment method & status (100% stacked bar):**
-- Insert → Stacked bar chart
-- Y axis: `billing[payment_method]`
-- X axis: `[Total Revenue]`
-- Legend: `billing[payment_status]`
-- Format → Colors: Paid = `#1D9E75`, Pending = `#EF9F27`, Failed = `#E24B4A`
-- Format → Data labels: on, show percentage
-- Chart title: **Revenue by payment method & status**
-
-**Panel 2 — Revenue by specialization (clustered bar):**
-- Insert → Clustered bar chart
-- Y axis: `doctors[specialization]`
-- X axis: `[Total Revenue]`
-- Sort descending by value
-- Format → Bars: color `#378ADD`, data labels on (inside end)
-- Chart title: **Revenue by specialization**
-
-Duplicate this chart → change Y axis to `doctors[hospital_branch]` → change bar color to `#85B7EB` → title: **Revenue by hospital branch**. Stack this directly below the first chart.
-
-**Panel 3 — Treatment type breakdown (donut):**
-- Insert → Donut chart
-- Legend: `treatments[treatment_type]`
-- Values: `[Total Revenue]`
-- Format → Inner radius: 55%
-- Format → Colors: Chemotherapy `#378ADD`, MRI `#1D9E75`, X-Ray `#BA7517`, Physiotherapy `#7F77DD`, ECG `#888780`
-- Format → Detail labels: category + percent
-- Chart title: **Treatment type breakdown**
-
-#### Step 7 — Build the bottom row (3 panels)
-
-**Panel 1 — Appointment status distribution (stacked bar) + Patient age & gender (clustered bar):**
-
-First chart:
-- Insert → Stacked bar chart
-- Y axis: any static column or blank label
-- X axis: count of `appointments[appointment_id]`
-- Legend: `appointments[status]`
-- Colors: Completed `#1D9E75`, No-show `#E24B4A`, Cancelled `#888780`, Scheduled `#378ADD`
-- Chart title: **Appointment status distribution**
-
-Second chart (below the first):
-- Insert → Clustered bar chart
-- Y axis: `patients[age_group]`
-- X axis: count of `patients[patient_id]`
-- Legend: `patients[gender]`
-- Colors: F `#378ADD`, M `#85B7EB`
-- Chart title: **Patient age & gender**
-
-**Panel 2 — Doctor no-show ranking (table):**
-- Insert → Table
-- Columns in order: `doctors[first_name] & " " & doctors[last_name]` (or a calculated column), `doctors[specialization]`, `doctors[hospital_branch]`, `[Total Appointments]`, `[No-Show Count]`, `[No-Show Rate %]`
-- Format → Style presets → Minimal
-- Format → Conditional formatting → select `[No-Show Rate %]` → Background color → Gradient: minimum white, maximum `#E24B4A`
-- Sort by `[No-Show Rate %]` descending
-- Chart title: **Doctor no-show ranking**
-
-To create the full name column, go to the `doctors` table → Modeling → New Column:
-```dax
-Doctor Name = doctors[first_name] & " " & doctors[last_name]
-```
-
-**Panel 3 — Slicers:**
-
-Insert 4 slicers, stacked vertically:
-
-| Slicer title | Field | Style |
-|---|---|---|
-| Payment method | `billing[payment_method]` | Tile |
-| Hospital branch | `doctors[hospital_branch]` | Tile |
-| Appointment status | `appointments[status]` | Tile |
-| Insurance provider | `patients[insurance_provider]` | Tile |
-
-For each slicer: Format → Slicer header → off · Format → Values → font size 10.
-
-#### Step 8 — Final alignment and polish
-
-1. Select all visuals in the middle row → Format → Align top edges
-2. Select all visuals in the bottom row → Format → Align top edges
-3. Check that KPI cards have identical width and height (use Format → Size & position to set exact values)
-4. Click each slicer → verify "Select all" is the default state
-5. Test: click any slicer value → all visuals on the page should respond
+1. **Bill only completed visits.** Generate a bill only when an appointment is marked "Completed".
+2. **Review the 35 bills paid for cancelled or no-show appointments (90,198).** Confirm whether they are valid fees (such as late-cancellation charges), refunds due, or data errors.
+3. **Clean up appointment statuses.** Update all past-dated "Scheduled" appointments, and add an automatic flag for any that stay open after their date.
+4. **Start a structured collections process.** Prioritise the 93,037 outstanding on completed visits, then failed (193,213) and pending (184,612) payments, with reminders, retries and payment plans.
+5. **Investigate failed payments.** Record failure reasons and verify insurance coverage before treatment where possible.
+6. **Reduce no-shows and cancellations.** Use SMS or email reminders, easy rescheduling and a waitlist, with extra outreach for senior patients.
+7. **Balance doctor workloads.** Review scheduling and capacity, especially at Central Hospital and for D005.
+8. **Standardise treatment pricing.** Set clear price bands per treatment type and fix the "Basic screening" vs "Advanced protocol" inconsistency.
+9. **Track key metrics monthly.** Completion rate, no-show rate, billed vs collected, days to payment and outstanding balance by age. Collect at least two years of data before judging individual doctors or branches.
 
 ---
 
-### DAX measures — complete reference
+## 🏁 Conclusion
 
-All measures sit in the `billing` table under a display folder named `_Measures`.
+The central issue in this data is **revenue and operational leakage**. Only 23% of appointments were completed, yet 100% were billed, and only 32% of billed value has been paid. Payment outcomes do not follow visit status, payment method, doctor, branch or treatment type, so the problem points to process (billing triggers, status updates and payment follow-up) and not to a particular group or clinician.
 
-```dax
-Total Revenue = SUM(billing[amount])
-```
-```dax
-Revenue Collected =
-CALCULATE(SUM(billing[amount]), billing[payment_status] = "Paid")
-```
-```dax
-Revenue Outstanding =
-CALCULATE(SUM(billing[amount]), billing[payment_status] = "Pending")
-```
-```dax
-Revenue Failed =
-CALCULATE(SUM(billing[amount]), billing[payment_status] = "Failed")
-```
-```dax
-Collection Rate % =
-DIVIDE([Revenue Collected], [Total Revenue], 0) * 100
-```
-```dax
-Total Appointments = COUNTROWS(appointments)
-```
-```dax
-No-Show Count =
-CALCULATE(COUNTROWS(appointments), appointments[status] = "No-show")
-```
-```dax
-No-Show Rate % =
-DIVIDE([No-Show Count], [Total Appointments], 0) * 100
-```
-```dax
-Completion Rate % =
-DIVIDE(
-    CALCULATE(COUNTROWS(appointments), appointments[status] = "Completed"),
-    [Total Appointments], 0
-) * 100
-```
-```dax
-Revenue MoM % =
-VAR CurrentMonth = [Total Revenue]
-VAR PrevMonth =
-    CALCULATE([Total Revenue], DATEADD('Date'[Date], -1, MONTH))
-RETURN
-    DIVIDE(CurrentMonth - PrevMonth, PrevMonth, 0) * 100
-```
+The most valuable next steps are to bill only for completed care, clean up stale appointment statuses, reconcile payments received for visits that never happened, and set up a structured collections and reminder process.
 
 ---
 
-## 6. Key findings
+## ⚠️ Limitations
 
-### Revenue
+- **Small sample.** 200 appointments, 50 patients and 10 doctors in a single year mean most subgroup comparisons are underpowered and not statistically significant.
+- **The data looks synthetic.** Status, payment status and payment method are split almost evenly, cost equals billed amount exactly, and every appointment has exactly one treatment and one bill. Names do not match gender, and Pediatrics doctors (5 of 10) only see patients aged 20–76.
+- **Inconsistencies between tables.** All appointments are billed regardless of status, 44 of 49 chemotherapy treatments are delivered by Dermatology or Pediatrics doctors, and 28 appointments are dated before the patient's registration date.
+- **Statuses may be out of date.** All "Scheduled" appointments fall in 2023, so the real completion rate could be higher than 23%.
+- **Billing interpretation.** The analysis assumes each bill is the charge for its linked appointment. If bills include cancellation fees or deposits, some findings about billing for non-completed visits would differ.
 
-- Total billed revenue for 2023: **$551,249.85**
-- Only **31.5% ($173,424.90) was successfully collected** — the other 68.5% is either pending or failed
-- **Failed payments account for 35.0% ($193,212.94)** — the single largest category, exceeding even collected revenue
-- Credit Card was the highest-volume payment method at $201,382 but carried the highest failure proportion
-- April 2023 was the peak revenue month at $64,271. December was the lowest at $27,569 — a 57% drop from peak
-
-### Appointments
-
-- 200 total appointments across the year
-- Only **23.0% (46) were completed** — the remaining 77% were no-shows, cancelled, or still pending
-- No-show rate: **26.0%** (52 appointments) — nearly 1 in 4
-- David Jones (Pediatrics, Central Hospital) and Sarah Smith (Pediatrics, Central Hospital) had the highest no-show rates at 35.7% and 35.3%
-- Jane Davis (Pediatrics, Eastside Clinic) had the lowest no-show rate at just **4.8%** — a strong positive outlier worth studying
-
-### Treatments
-
-- Chemotherapy was the most frequent treatment (49 procedures, $128,855 total)
-- MRI had the highest average cost per procedure at **$3,224.95**
-- All five treatment types are within a similar revenue band ($96K–$129K), suggesting balanced clinical utilization
-
-### Patients & demographics
-
-- 50 unique patients: 80% Adult (40), 20% Senior (10) — no Minor patients in this dataset
-- Gender split: 62% Male (31), 38% Female (19)
-- MedCare Plus is the largest insurance provider (18 patients, 36%), followed by WellnessCorp (16, 32%)
-- HealthIndia covers the fewest patients at 6 (12%)
-
-### Branch performance
-
-- Central Hospital leads in revenue at $229,039 (41.5% of total)
-- Eastside Clinic ($162,031) and Westside Clinic ($160,179) are nearly equal at approximately 29% each
-- Central Hospital also has the highest concentration of doctors with elevated no-show rates
-
----
-
-## 7. Recommendations
-
-Three actions would have the highest business impact based on this analysis:
-
-**1. Investigate failed payment processing immediately**
-35% of all billed revenue ($193K) resulted in failed payments — exceeding even what was successfully collected. This is not a normal patient refusal rate. It points to a systemic issue in payment processing, insurance claim submission, or billing system configuration. This single issue, if resolved, could recover more revenue than any other initiative.
-
-**2. Study and replicate Jane Davis's scheduling approach**
-Jane Davis (Pediatrics, Eastside Clinic) achieved a 4.8% no-show rate while working in the same patient population as colleagues with 30%+ rates. A structured comparison of her appointment reminder cadence, scheduling lead time, and patient communication would likely produce a replicable model that could be applied clinic-wide.
-
-**3. Address Q4 revenue decline with targeted analysis**
-Revenue drops sharply from October through December (average $41K/month) compared to H1 (average $52K/month). Before acting, the cause needs to be identified — whether it is seasonal demand, reduced provider availability, a billing lag, or something else — as the right response differs significantly depending on the root cause.
-
----
-
-## 8. How to reproduce this project
-
-### Requirements
-
-- MySQL 8.0 or higher + MySQL Workbench
-- Microsoft Excel
-- Power BI Desktop (free — microsoft.com/en-us/power-bi)
-- MySQL Connector/NET (for Power BI → MySQL connection — mysql.com/downloads/connector/net)
-
-### Step 1 — Clean the CSV files
-
-Open `billing.csv` in Excel:
-1. Insert a new column next to `amount`
-2. Enter: `=VALUE(TRIM(SUBSTITUTE(E2,",","")))`
-3. Copy the column → Paste Special → Values only → delete original column → rename to `amount`
-4. Save as CSV
-
-Repeat the same steps for the `cost` column in `treatments.csv`.
-
-### Step 2 — Run the SQL script
-
-Open MySQL Workbench → connect to localhost → open `sql/clinic_analytics.sql` → execute all.
-
-Verify:
-```sql
-USE clinic_analytics;
-SHOW TABLES;          -- should show 5 tables
-SELECT COUNT(*) FROM billing;  -- should return 200
-```
-
-### Step 3 — Connect Power BI
-
-1. Install MySQL Connector/NET if not already installed
-2. Power BI Desktop → Get Data → MySQL Database
-3. Server: `localhost` · Database: `clinic_analytics`
-4. Load: `appointments`, `billing`, `doctors`, `patients`, `treatments`, `vw_clinic_master`
-5. In Power Query: verify `amount` and `cost` are Decimal Number type → Close & Apply
-
-### Step 4 — Build data model, measures, and dashboard
-
-Follow the step-by-step instructions in Section 5.
-
----
-
-## 9. Repository structure
-
-```
-clinic-operations-analytics/
-│
-├── data/
-│   ├── patients_clean.csv
-│   ├── doctors.csv
-│   ├── appointments.csv
-│   ├── treatments.csv
-│   └── billing.csv
-│
-├── insights/
-│   └── dash.jpg                    ← screenshot of the dashboard
-│
-├── powerbi/
-│   └── dash.pbix                    ← export your Power BI dashboard here
-│
-├── sql/
-│   └── clinic_analytics.sql       ← full script: schema, import notes,
-│                                     EDA, analytics, window functions, view
-│
-└── README.md
-```
-
+> **Note:** because of the synthetic nature of the data, the findings are illustrative and should not be treated as real hospital performance.
 ---
 
 ## Author
